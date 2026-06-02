@@ -6,7 +6,7 @@ from __future__ import annotations
 def redact_email(email: str) -> str:
     """Mask an email address for safe external sharing.
 
-    Example: ``bachovak@gmail.com`` → ``b****@gmail.com``
+    Example: ``john@gmail.com`` → ``j****@gmail.com``
 
     Args:
         email: Raw email address string.
