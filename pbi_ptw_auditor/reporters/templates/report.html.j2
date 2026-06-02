@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Power BI Publish-to-Web Audit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────── */
+    :root {
+      --colour-dark:       #1A3D5C;
+      --colour-primary:    #2A5F8F;
+      --colour-accent:     #C2603A;
+      --colour-mid:        #5B8DB8;
+      --colour-bg:         #F4F1EB;
+      --colour-card:       #FFFFFF;
+      --colour-text:       #2A3A4A;
+      --colour-text-muted: #6A7E90;
+      --colour-border:     #D9D4C8;
+      --colour-green:      #16A34A;
+      --colour-warning:    #D4901A;
+      --radius:            8px;
+      --radius-pill:       100px;
+    }
+
+    /* ── Reset / base ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Source Sans 3', sans-serif;
+      background: var(--colour-bg);
+      color: var(--colour-text);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    h1, h2, h3, h4 { font-family: 'Playfair Display', serif; }
+
+    a { color: var(--colour-primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    .site-header {
+      background: var(--colour-dark);
+      color: #fff;
+      padding: 28px 40px;
+    }
+
+    .site-header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .site-header .meta {
+      margin-top: 6px;
+      color: var(--colour-mid);
+      font-size: 0.875rem;
+    }
+
+    .site-header .meta span + span::before { content: ' · '; }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    .container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 40px 48px;
+    }
+
+    /* ── Summary cards ──────────────────────────────────────────────── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: var(--colour-card);
+      border: 1px solid var(--colour-border);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+    }
+
+    .card__label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--colour-text-muted);
+    }
+
+    .card__value {
+      font-size: 2.4rem;
+      font-weight: 700;
+      line-height: 1.1;
+      margin-top: 6px;
+      color: var(--colour-primary);
+    }
+
+    .card--alert  .card__value { color: var(--colour-accent); }
+    .card--warn   .card__value { color: var(--colour-warning); }
+    .card--neutral .card__value { color: var(--colour-text-muted); }
+
+    /* ── Section heading ────────────────────────────────────────────── */
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .section-head h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: var(--colour-dark);
+    }
+
+    /* ── Filters ────────────────────────────────────────────────────── */
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .filters input[type="text"],
+    .filters select {
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--colour-border);
+      border-radius: var(--radius);
+      font-family: inherit;
+      font-size: 0.875rem;
+      background: var(--colour-card);
+      color: var(--colour-text);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .filters input[type="text"] { min-width: 240px; flex: 1; }
+    .filters input[type="text"]:focus,
+    .filters select:focus { border-color: var(--colour-primary); }
+
+    /* ── Table ──────────────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: var(--radius);
+      border: 1px solid var(--colour-border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--colour-card);
+      font-size: 0.85rem;
+    }
+
+    thead th {
+      background: var(--colour-dark);
+      color: #fff;
+      padding: 11px 14px;
+      text-align: left;
+      font-family: 'Source Sans 3', sans-serif;
+      font-weight: 600;
+      font-size: 0.8rem;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      position: sticky;
+      top: 0;
+    }
+
+    thead th:hover { background: var(--colour-primary); }
+
+    thead th[data-sort]::after {
+      content: ' ⇅';
+      opacity: 0.45;
+      font-size: 0.75em;
+    }
+    thead th[data-sort="asc"]::after  { content: ' ▲'; opacity: 1; }
+    thead th[data-sort="desc"]::after { content: ' ▼'; opacity: 1; }
+
+    tbody tr { border-bottom: 1px solid var(--colour-border); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8f7f3; }
+
+    tbody td {
+      padding: 9px 14px;
+      vertical-align: middle;
+      color: var(--colour-text);
+    }
+
+    .cell-name { font-weight: 600; }
+    .cell-url { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell-muted { color: var(--colour-text-muted); }
+
+    /* ── Flag badges ────────────────────────────────────────────────── */
+    .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 9px;
+      border-radius: var(--radius-pill);
+      font-size: 0.72rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge--prod    { background: #FEF3C7; color: #78350F; }
+    .badge--label   { background: #FEE2E2; color: #991B1B; }
+    .badge--source  { background: #FED7AA; color: #7C2D12; }
+    .badge--default { background: #E0E7EF; color: #2A3A4A; }
+
+    /* ── Enrichment status ──────────────────────────────────────────── */
+    .status { display: inline-block; padding: 1px 8px; border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 600; }
+    .status--ok      { background: #DCFCE7; color: #166534; }
+    .status--partial { background: #FEF9C3; color: #713F12; }
+    .status--failed  { background: #FEE2E2; color: #991B1B; }
+
+    /* ── Empty / no-results state ───────────────────────────────────── */
+    .no-results {
+      display: none;
+      padding: 48px;
+      text-align: center;
+      color: var(--colour-text-muted);
+      font-style: italic;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────── */
+    .site-footer {
+      text-align: center;
+      padding: 24px 40px;
+      color: var(--colour-text-muted);
+      font-size: 0.78rem;
+      border-top: 1px solid var(--colour-border);
+    }
+
+    .site-footer a { color: var(--colour-text-muted); }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────────────────────── -->
+<header class="site-header">
+  <h1>Power BI Publish-to-Web Audit</h1>
+  <p class="meta">
+    <span>{{ metadata.utc_timestamp }}</span>
+    <span>Tenant: {{ metadata.tenant_id }}</span>
+    <span>Auth: {{ metadata.auth_method }}</span>
+    {% if metadata.deep_scan %}<span>Deep scan enabled</span>{% endif %}
+  </p>
+</header>
+
+<!-- ── Main content ──────────────────────────────────────────────────── -->
+<main class="container">
+
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card__label">Total Public Reports</div>
+      <div class="card__value">{{ metadata.total_count }}</div>
+    </div>
+
+    <div class="card {{ 'card--alert' if metadata.flagged_count > 0 else '' }}">
+      <div class="card__label">Flagged Reports</div>
+      <div class="card__value">{{ metadata.flagged_count }}</div>
+    </div>
+
+    {% if metadata.deep_scan %}
+    <div class="card {{ 'card--warn' if metadata.missing_label_count > 0 else '' }}">
+      <div class="card__label">No Sensitivity Label</div>
+      <div class="card__value">{{ metadata.missing_label_count }}</div>
+    </div>
+    {% endif %}
+
+    <div class="card card--neutral">
+      <div class="card__label">Distinct Sharers</div>
+      <div class="card__value">{{ distinct_sharers }}</div>
+    </div>
+
+    <div class="card card--neutral">
+      <div class="card__label">Distinct Workspaces</div>
+      <div class="card__value">{{ distinct_workspaces }}</div>
+    </div>
+  </div>
+
+  <!-- Table section -->
+  <div class="section-head">
+    <h2>Published-to-Web Reports</h2>
+    <div class="filters">
+      <input
+        type="text"
+        id="search-input"
+        placeholder="Search by name, workspace, sharer…"
+        aria-label="Search reports"
+        oninput="applyFilters()"
+      >
+      <select id="flag-select" aria-label="Filter by flag" onchange="applyFilters()">
+        <option value="">All reports</option>
+        <option value="__flagged__">Flagged only</option>
+        <option value="production_workspace">Production workspace</option>
+        <option value="no_sensitivity_label">No sensitivity label</option>
+        <option value="sensitive_source">Sensitive source</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="report-table" aria-label="Reports published to web">
+      <thead>
+        <tr>
+          <th data-sort onclick="sortBy(0)">Report Name</th>
+          <th data-sort onclick="sortBy(1)">Workspace</th>
+          <th data-sort onclick="sortBy(2)">Sharer</th>
+          <th data-sort onclick="sortBy(3)">Sharer Email</th>
+          <th data-sort onclick="sortBy(4)">Principal Type</th>
+          <th data-sort onclick="sortBy(5)">Sensitivity Label</th>
+          <th>Flags</th>
+          <th data-sort onclick="sortBy(7)">Enrichment</th>
+          <th>Links</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        {% for r in reports %}
+        <tr data-flags="{{ r.flags | join(' ') }}">
+          <td class="cell-name">{{ r.displayName }}</td>
+          <td>{{ r.workspaceName if r.workspaceName else '<span class="cell-muted">—</span>' }}</td>
+          <td>{{ r.sharerName }}</td>
+          <td class="cell-muted">{{ r.sharerEmail if r.sharerEmail else '—' }}</td>
+          <td>{{ r.sharerPrincipalType }}</td>
+          <td>
+            {% if r.sensitivityLabel %}
+              {{ r.sensitivityLabel }}
+            {% else %}
+              <span class="cell-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="badges">
+              {% for flag in r.flags %}
+                {% if flag == 'production_workspace' %}
+                  <span class="badge badge--prod">Production WS</span>
+                {% elif flag == 'no_sensitivity_label' %}
+                  <span class="badge badge--label">No Label</span>
+                {% elif flag == 'sensitive_source' %}
+                  <span class="badge badge--source">Sensitive Source</span>
+                {% else %}
+                  <span class="badge badge--default">{{ flag }}</span>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            <span class="status status--{{ r.enrichment_status }}">{{ r.enrichment_status }}</span>
+          </td>
+          <td>
+            {% if r.webUrl %}
+              <a href="{{ r.webUrl }}" target="_blank" rel="noopener noreferrer" title="{{ r.webUrl }}">Web</a>
+            {% endif %}
+            {% if r.webUrl and r.embedUrl %}&nbsp;·&nbsp;{% endif %}
+            {% if r.embedUrl %}
+              <a href="{{ r.embedUrl }}" target="_blank" rel="noopener noreferrer" title="{{ r.embedUrl }}">Embed</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" class="no-results" style="display:table-cell;">
+            No reports published to the open web were found.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="no-results" id="no-results-msg">No reports match the current filters.</div>
+  </div>
+
+</main>
+
+<!-- ── Footer ────────────────────────────────────────────────────────── -->
+<footer class="site-footer">
+  <a href="https://github.com/bachovak/pbi-ptw-auditor" target="_blank" rel="noopener noreferrer">pbi-ptw-auditor</a>
+  &nbsp;·&nbsp; Read-only tenant audit tool &nbsp;·&nbsp; MIT Licence
+</footer>
+
+<!-- ── Vanilla JS: sort + filter ─────────────────────────────────────── -->
+<script>
+(function () {
+  'use strict';
+
+  var currentSortCol = -1;
+  var currentSortAsc = true;
+
+  /* ---------- Sort ---------- */
+  window.sortBy = function (colIndex) {
+    var table  = document.getElementById('report-table');
+    var tbody  = document.getElementById('table-body');
+    var headers = table.querySelectorAll('thead th[data-sort]');
+
+    if (currentSortCol === colIndex) {
+      currentSortAsc = !currentSortAsc;
+    } else {
+      currentSortCol = colIndex;
+      currentSortAsc = true;
+    }
+
+    headers.forEach(function (th) { th.removeAttribute('data-sort'); th.setAttribute('data-sort', ''); });
+    var activeHeaders = table.querySelectorAll('thead th');
+    if (activeHeaders[colIndex]) {
+      activeHeaders[colIndex].setAttribute('data-sort', currentSortAsc ? 'asc' : 'desc');
+    }
+
+    var rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort(function (a, b) {
+      var av = (a.cells[colIndex] ? a.cells[colIndex].textContent : '').trim().toLowerCase();
+      var bv = (b.cells[colIndex] ? b.cells[colIndex].textContent : '').trim().toLowerCase();
+      if (av < bv) return currentSortAsc ? -1 : 1;
+      if (av > bv) return currentSortAsc ?  1 : -1;
+      return 0;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+    applyFilters();
+  };
+
+  /* ---------- Filter ---------- */
+  window.applyFilters = function () {
+    var search    = (document.getElementById('search-input').value || '').toLowerCase().trim();
+    var flagSel   = document.getElementById('flag-select').value;
+    var tbody     = document.getElementById('table-body');
+    var rows      = tbody.querySelectorAll('tr');
+    var visible   = 0;
+
+    rows.forEach(function (row) {
+      var text      = row.textContent.toLowerCase();
+      var flagData  = (row.dataset.flags || '').trim();
+      var flagList  = flagData ? flagData.split(' ') : [];
+
+      var matchText = !search || text.indexOf(search) !== -1;
+
+      var matchFlag = true;
+      if (flagSel === '__flagged__') {
+        matchFlag = flagList.length > 0;
+      } else if (flagSel) {
+        matchFlag = flagList.indexOf(flagSel) !== -1;
+      }
+
+      var show = matchText && matchFlag;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    document.getElementById('no-results-msg').style.display = (visible === 0 && rows.length > 0) ? 'block' : 'none';
+  };
+}());
+</script>
+
+</body>
+</html>

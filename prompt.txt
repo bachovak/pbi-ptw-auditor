@@ -1,0 +1,116 @@
+Build me an open-source Python CLI tool called **`pbi-ptw-auditor`** (Power BI Publish to Web Auditor). It inventories every Power BI report currently published to the open web in a tenant, using the supported Power BI Admin REST API. The repo will be published publicly to `github.com/bachovak/pbi-ptw-auditor` under the MIT licence, so everything must be clean, documented, and safe to open-source.
+
+## The problem it solves
+
+Disabling the "Publish to web" tenant setting does **not** retroactively unpublish reports that were already shared — they keep serving data to the open internet, and there is no list of them in the Power BI service UI. Admins need a programmatic inventory to find and review them. This tool produces that inventory. It is **strictly read-only**: it never revokes embed codes, never deletes anything, never mutates tenant state.
+
+## Tech stack
+
+- Python 3.11+
+- `msal` for auth, `httpx` (or `requests`) for HTTP, `python-dotenv` for config, `click` for the CLI, `jinja2` for the HTML report, `pydantic` (v2) or dataclasses for models. `rich` optional for console output.
+- `pytest` + an HTTP mocking lib (`respx` if httpx, `responses` if requests) for tests.
+- `pyproject.toml` based packaging. No `setup.py`.
+
+## Authentication (support BOTH; default to service principal)
+
+1. **Service principal (default)** — client-credentials flow via MSAL `ConfidentialClientApplication`. Token endpoint `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`, scope `https://analysis.windows.net/powerbi/api/.default`. Requires: an Entra app registration; the service principal added to a security group enabled under the tenant setting "Service principals can use read-only Power BI admin APIs"; and the app/SP granted Power BI/Fabric admin context. Read config from env: `PBI_TENANT_ID`, `PBI_CLIENT_ID`, `PBI_CLIENT_SECRET`.
+2. **Device code (interactive)** — MSAL `PublicClientApplication` device-code flow, same scope, for a user who is a Power BI Admin / Fabric Admin / Global Admin and just wants to run it once without a secret. Needs only `PBI_TENANT_ID` and `PBI_CLIENT_ID`.
+
+Selectable via `--auth service-principal|device-code`. Never log or print token values or the client secret.
+
+## Core retrieval
+
+- Base URL `https://api.powerbi.com/v1.0/myorg/`.
+- Primary endpoint: `GET admin/widelySharedArtifacts/publishedToWeb`.
+- The native payload per item is thin: `artifactId`, `displayName`, `artifactType` (always `Report`), `accessRight`, `shareType` (`PublishToWeb`), and `sharer` (`displayName`, `emailAddress`, `identifier`, `graphId`, `principalType`).
+- **Pagination gotcha:** the response returns a `continuationToken` and a `continuationUri`. The `continuationUri` can point at the sibling `linksSharedToWholeOrganization` path — do NOT blindly follow it. Loop using `continuationToken` and rebuild the URL against the `publishedToWeb` path yourself, URL-encoding the token, until no token is returned.
+- Structure the API client so the sibling endpoint `admin/widelySharedArtifacts/linksSharedToWholeOrganization` can be added as a second "widely shared" category later with minimal change. Do not implement it now.
+
+## Enrichment
+
+The thin payload doesn't tell you where a report lives or what it's built on. Add enrichment:
+
+- **Medium (default).** Call `GET admin/reports` (Get Reports As Admin) to map `artifactId` → report `webUrl`, `embedUrl`, `datasetId`, and `workspaceId`; and `GET admin/groups` (Get Groups As Admin, with `$top`/`$skip` paging and `$filter` where useful) to map `workspaceId` → workspace name. Build in-memory lookups and join. Note: Get Groups As Admin is rate-limited (~50 calls/hour/tenant, 30s response cap) — minimise calls and page sensibly.
+- **Rich (`--deep-scan` flag, opt-in).** Use the metadata scanner API to retrieve sensitivity labels and dataset source detail: `POST admin/workspaces/getInfo` (batch up to 100 workspace IDs, request lineage/datasource/sensitivity-label detail), then poll `GET admin/workspaces/scanStatus/{scanId}` until `Succeeded`, then `GET admin/workspaces/scanResult/{scanId}`. Honour the scanner rate limits and document that "Enhanced metadata scanning" tenant settings must be enabled. Keep this off by default because it is slow and rate-limited.
+
+## Risk flagging (light, transparent, toggleable with `--no-flags`)
+
+Apply a small set of clearly documented heuristic flags per report. Keep them minimal and well-labelled to avoid false-positive noise. Defaults:
+
+- `no_sensitivity_label` — only evaluated under `--deep-scan`; report's dataset has no MIP label.
+- `production_workspace` — workspace name matches a configurable case-insensitive regex (default `prod|production`).
+- `sensitive_source` — only under `--deep-scan`; dataset bound to a source type in a configurable watchlist (e.g. SQL, Direct Lake, lakehouse).
+
+Put the rules in one small, readable module with the regex/watchlist exposed as config so users can tune or disable them. Each output row should show which flags fired, not just a score.
+
+## Output
+
+Write to an output directory (`--output-dir`, default `./output`). Formats selectable via `--formats csv,json,html` (default all three):
+
+- **CSV** — one flat row per published report: report name/id, workspace name/id, dataset name/id, sharer name/email/principal type, webUrl, embedUrl, fired flags, plus enrichment status.
+- **JSON** — structured, with a `run_metadata` block (UTC timestamp, tenant id, auth method, deep_scan bool, total count, flagged count, count missing labels) and a `reports` array.
+- **HTML** — a single self-contained file (inline CSS + vanilla JS, no runtime deps beyond a Google Fonts link) with: summary cards (total public reports, flagged count, reports without a sensitivity label, distinct sharers, distinct workspaces) and a sortable, filterable table. Use this exact brand design system:
+  - Colours: `--colour-dark:#1A3D5C; --colour-primary:#2A5F8F; --colour-accent:#C2603A; --colour-mid:#5B8DB8; --colour-bg:#F4F1EB; --colour-card:#FFFFFF; --colour-text:#2A3A4A; --colour-text-muted:#6A7E90; --colour-border:#D9D4C8; --colour-green:#16A34A; --colour-warning:#D4901A;`
+  - Fonts: Playfair Display (headings), Source Sans 3 (body). Radius: 8px standard, 100px for pills/badges. Flags shown as coloured pill badges.
+
+Add a `--redact` flag that masks sharer email addresses in all outputs (e.g. `j****@contoso.com`) so the HTML/CSV can be shared externally or used as a portfolio/demo artefact without exposing real identities.
+
+## CLI surface (use `click`)
+
+`--auth`, `--deep-scan`, `--output-dir`, `--formats`, `--no-flags`, `--redact`, `--prod-workspace-regex`, `--log-level`. Provide `--help` text and at least two worked usage examples in the README.
+
+## Robustness
+
+- Centralise HTTP in one client with: exponential backoff honouring the `Retry-After` header on `429`; clear, actionable errors on `401`/`403` (explain the required admin role and the read-only-admin-API tenant setting rather than dumping a stack trace); timeouts; and graceful degradation (if enrichment partially fails, still emit the core inventory and mark enrichment status per row).
+- Structured logging via the `logging` module; `--log-level` controls verbosity. Secrets must never appear in logs.
+
+## Code quality & structure
+
+Modular, fully type-hinted, docstrings on public functions. Suggested layout:
+
+```
+pbi_ptw_auditor/
+  __init__.py
+  cli.py            # click entrypoint
+  auth.py           # SP + device-code token acquisition
+  api_client.py     # base URL, paging, retry/backoff, read-only guard
+  retrieve.py       # publishedToWeb pull
+  enrich.py         # reports/groups lookups + optional scanner
+  flags.py          # documented heuristics, configurable
+  models.py         # pydantic/dataclass models
+  reporters/
+    csv_reporter.py
+    json_reporter.py
+    html_reporter.py
+    templates/report.html.j2
+tests/
+  test_pagination.py
+  test_flags.py
+  test_enrich_join.py
+pyproject.toml
+README.md
+LICENSE
+.env.example
+.gitignore
+.github/workflows/ci.yml
+```
+
+Write tests with mocked HTTP for: pagination loop (including the continuationUri gotcha), the flag heuristics, and the report/workspace join. Don't hit a live tenant in tests.
+
+## Open-source packaging
+
+- `LICENSE`: MIT, copyright holder "Kristina Bachová".
+- `.env.example` listing every supported env var with placeholder values and a comment per var.
+- `.gitignore`: standard Python plus `.env` and `output/`.
+- `README.md` covering: the governance problem (publish-to-web persists after the setting is disabled), prerequisites (Entra app registration, the read-only-admin-API tenant setting + security group, required admin role, and for deep scan the metadata-scanning settings), install, usage examples, sample output, the read-only safety guarantee, the documented flag heuristics, contributing notes, and licence.
+- `.github/workflows/ci.yml`: lint (ruff) + `pytest` on push/PR. Leave a clearly commented placeholder note in the README/workflows describing where a future *scheduled* exposure-audit workflow (commit timestamped snapshots, diff over time) would slot in — but do not build the scheduled diff now.
+
+## Hard constraints (do not violate)
+
+- **Read-only only.** No DELETE/PATCH/PUT calls and no state-mutating POSTs. The only POST permitted is `admin/workspaces/getInfo`, which is read-only metadata scanning. Add a guard in the API client that refuses non-GET requests except that one explicitly allowlisted scanner POST.
+- Never commit real tenant data, tokens, or secrets. Any sample data in the repo must be synthetic/redacted.
+- Never log secrets or tokens.
+
+## When done
+
+Initialise a git repo with sensible commit history and prepare it for publishing to `github.com/bachovak/pbi-ptw-auditor` as a public MIT repository. If the GitHub CLI (`gh`) is available and authenticated, offer to create the repo and push; otherwise print the exact `git remote add` / `git push` commands I should run. Finish with a short summary of what was built and the prerequisite setup steps I need to complete in my tenant before the first run.
