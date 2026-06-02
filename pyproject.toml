@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pbi-ptw-auditor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Inventory Power BI reports published to the open web via the Power BI Admin REST API"
 readme = "README.md"
 license = { file = "LICENSE" }

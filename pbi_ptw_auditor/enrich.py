@@ -1,13 +1,17 @@
 """Enrich raw PublishedReport objects with workspace/dataset metadata.
 
-Medium enrichment (default):
+Medium enrichment (always runs):
   - GET admin/reports  → webUrl, embedUrl, datasetId, workspaceId
   - GET admin/groups   → workspaceName
 
-Rich enrichment (--deep-scan, opt-in):
+Rich enrichment (default; skipped with --no-deep-scan):
   - POST admin/workspaces/getInfo  → sensitivity labels, datasource types
-    Requires "Enhanced metadata scanning" tenant settings to be enabled.
-    Rate-limited; batched at 100 workspaces per request.
+    Requires "Enhanced metadata scanning" / "Detailed metadata responses"
+    tenant settings to be enabled. Rate-limited; batched at 100 workspaces.
+
+Fail-safe: if the scanner runs but returns no label or source data for any
+dataset, detect_detailed_metadata_available() returns False. Callers must
+then suppress metadata-dependent flags rather than firing them on empty data.
 """
 
 from __future__ import annotations
@@ -148,6 +152,24 @@ def run_deep_scan(client: PowerBIClient, workspace_ids: list[str]) -> dict[str, 
 
     logger.info("Deep scan complete. Results for %d workspaces.", len(results))
     return results
+
+
+def detect_detailed_metadata_available(enriched: list[EnrichedReport]) -> bool:
+    """Return True if the scanner returned any sensitivity label or datasource data.
+
+    When "Enhanced metadata scanning" / "Detailed metadata responses" tenant
+    settings are disabled, the scanner succeeds but all datasets come back with
+    null labels and empty datasource lists. If no enriched report carries either
+    piece of data we treat detailed metadata as unavailable and callers must
+    suppress metadata-dependent flags to avoid false positives.
+
+    Args:
+        enriched: Reports after enrich_reports() has been applied.
+
+    Returns:
+        True if at least one report has a sensitivity label or datasource type.
+    """
+    return any(r.sensitivityLabel or r.datasetSourceTypes for r in enriched)
 
 
 def enrich_reports(

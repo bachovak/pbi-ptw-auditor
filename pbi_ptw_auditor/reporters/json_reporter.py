@@ -35,6 +35,8 @@ def _report_to_dict(r: EnrichedReport, *, redact: bool) -> dict[str, Any]:
         "sensitivityLabel": r.sensitivityLabel,
         "datasetSourceTypes": r.datasetSourceTypes,
         "flags": r.flags,
+        "indeterminate_flags": r.indeterminate_flags,
+        "metadata_status": r.metadata_status,
         "enrichment_status": r.enrichment_status,
     }
 
@@ -60,9 +62,12 @@ def write_json(
             "tenant_id": metadata.tenant_id,
             "auth_method": metadata.auth_method,
             "deep_scan": metadata.deep_scan,
+            "detailed_metadata_available": metadata.detailed_metadata_available,
             "total_count": metadata.total_count,
             "flagged_count": metadata.flagged_count,
+            # null when detailed_metadata_available is False (could not be determined).
             "missing_label_count": metadata.missing_label_count,
+            "warnings": metadata.warnings,
         },
         "reports": [_report_to_dict(r, redact=redact) for r in reports],
     }

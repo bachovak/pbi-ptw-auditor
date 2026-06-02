@@ -24,7 +24,7 @@ def write_html(
 
     Args:
         reports: List of enriched reports.
-        metadata: Run-level metadata for the summary cards.
+        metadata: Run-level metadata for the summary cards and warning banner.
         path: Destination file path.
         redact: If True, mask sharer email addresses.
     """
@@ -54,6 +54,8 @@ def write_html(
                 "sensitivityLabel": r.sensitivityLabel or "",
                 "datasetSourceTypes": "|".join(r.datasetSourceTypes),
                 "flags": r.flags,
+                "indeterminate_flags": r.indeterminate_flags,
+                "metadata_status": r.metadata_status,
                 "enrichment_status": r.enrichment_status,
             }
         )
@@ -67,9 +69,11 @@ def write_html(
             "tenant_id": metadata.tenant_id,
             "auth_method": metadata.auth_method,
             "deep_scan": metadata.deep_scan,
+            "detailed_metadata_available": metadata.detailed_metadata_available,
             "total_count": metadata.total_count,
             "flagged_count": metadata.flagged_count,
             "missing_label_count": metadata.missing_label_count,
+            "warnings": metadata.warnings,
         },
         reports=report_dicts,
         distinct_sharers=distinct_sharers,

@@ -48,12 +48,15 @@ class EnrichedReport(BaseModel):
     workspaceName: Optional[str] = None
     datasetName: Optional[str] = None
 
-    # Rich enrichment (metadata scanner, --deep-scan only)
+    # Rich enrichment (metadata scanner)
     sensitivityLabel: Optional[str] = None
     datasetSourceTypes: list[str] = Field(default_factory=list)
 
     # Audit metadata
     flags: list[str] = Field(default_factory=list)
+    indeterminate_flags: list[str] = Field(default_factory=list)
+    # not_requested | available | indeterminate
+    metadata_status: str = "not_requested"
     enrichment_status: str = "ok"  # ok | partial | failed
 
 
@@ -66,4 +69,7 @@ class RunMetadata(BaseModel):
     deep_scan: bool
     total_count: int
     flagged_count: int
-    missing_label_count: int
+    # None means the count could not be determined (metadata unavailable).
+    missing_label_count: Optional[int] = None
+    detailed_metadata_available: bool = True
+    warnings: list[str] = Field(default_factory=list)

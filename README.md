@@ -1,6 +1,6 @@
 # pbi-ptw-auditor
 
-**Inventory every Power BI report published to the open internet in your tenant.**
+**Full data-level exposure assessment for Power BI reports published to the open internet.**
 
 [![CI](https://github.com/bachovak/pbi-ptw-auditor/actions/workflows/ci.yml/badge.svg)](https://github.com/bachovak/pbi-ptw-auditor/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
@@ -12,19 +12,21 @@
 
 Power BI's "Publish to web" feature lets users embed live reports on any public website — no authentication required. **Disabling the tenant setting does not retroactively unpublish existing embed codes.** Reports that were shared before the setting was turned off continue to serve data to the open internet indefinitely, and the Power BI service UI provides no list of them.
 
-`pbi-ptw-auditor` solves this by querying the Power BI Admin REST API and producing a full, auditable inventory of every `PublishToWeb` embed code active in your tenant. It is **strictly read-only**: it never revokes embed codes, deletes anything, or mutates tenant state.
+`pbi-ptw-auditor` solves this by querying the Power BI Admin REST API and producing a full, auditable inventory of every `PublishToWeb` embed code active in your tenant — complete with sensitivity labels, datasource types, and risk flags. It is **strictly read-only**: it never revokes embed codes, deletes anything, or mutates tenant state.
 
 ---
 
 ## Features
 
-- **Complete inventory** via `GET admin/widelySharedArtifacts/publishedToWeb` with correct continuationToken pagination.
+- **Complete inventory** via `GET admin/widelySharedArtifacts/publishedToWeb` with correct continuationToken pagination (never follows `continuationUri`).
 - **Workspace & dataset enrichment** using `admin/reports` and `admin/groups`.
-- **Optional deep scan** (`--deep-scan`) with the metadata scanner API for sensitivity labels and datasource types.
+- **Sensitivity labels and datasource types** via the metadata scanner API — runs by default.
+- **Fail-safe metadata handling**: when the scanner runs but the tenant's enhanced metadata settings are off, metadata-dependent flags are marked **indeterminate** rather than firing on empty data or silently clearing.
 - **Risk flags**: production workspace, missing sensitivity label, sensitive data source — all documented, configurable, and shown per row.
-- **Three output formats**: CSV, JSON (with run metadata block), self-contained HTML with sortable/filterable table.
-- **Email redaction** (`--redact`) for safe external sharing of the HTML report.
+- **Three output formats**: CSV, JSON (with run metadata block), self-contained HTML with warning banner, sortable/filterable table, and indeterminate badge indicators.
+- **Email redaction** (`--redact`) for safe external sharing.
 - **Service principal or device-code auth** — no hardcoded credentials.
+- **`--no-deep-scan`** for a faster, inventory-only run that skips the scanner.
 
 ---
 
@@ -38,32 +40,34 @@ Create an app registration in Microsoft Entra (Azure AD):
 2. Name it (e.g. `pbi-ptw-auditor`), single-tenant, no redirect URI needed.
 3. Under **Certificates & secrets**, create a client secret. Note the value immediately.
 4. Note the **Application (client) ID** and **Directory (tenant) ID** from the Overview page.
+5. Under **Authentication → Advanced settings**, set **"Allow public client flows"** to **Yes** (required for device-code auth only).
 
-The app registration needs **no API permissions** in Entra — Power BI Admin access is granted via the tenant setting below, not via Entra roles.
+The app registration needs **no Entra API permissions** — Power BI Admin access is granted via the tenant settings below.
 
 ### 2. Power BI tenant setting: read-only admin APIs for service principals
 
 1. In the **Power BI Admin portal → Tenant settings**, find **"Service principals can use read-only Power BI admin APIs"**.
 2. Enable it and scope it to a security group.
-3. Add your app registration's service principal to that security group (search by the app's display name in Entra).
+3. Add your app registration's service principal to that security group.
 
-> **Device-code auth**: skip step 3. Instead, the user running the tool must be a **Power BI Admin**, **Fabric Admin**, or **Global Admin** in the tenant.
+> **Device-code auth**: the user signing in must be a **Power BI Administrator**, **Microsoft Fabric Administrator**, or **Global Administrator**. No security group needed.
 
-### 3. Required admin role
+### 3. Enhanced metadata scanning (required for the default run)
 
-For device-code auth the authenticating user must be one of:
+The default run calls the metadata scanner API to retrieve sensitivity labels and datasource types. Two tenant settings must be enabled for this to return data:
+
+1. **Power BI Admin portal → Tenant settings → "Enhanced metadata scanning"** — enable it.
+2. **"Allow detailed metadata responses in tenant-wide admin APIs"** (may appear as "Detailed metadata responses") — enable it.
+
+Without these settings the scanner succeeds but returns no label or datasource detail. The tool detects this automatically and marks the affected flags as **indeterminate** rather than firing them. A warning banner appears in the HTML report. You can also run `--no-deep-scan` to skip the scanner entirely.
+
+### 4. Required admin role
+
+For **device-code auth** the authenticating user must be one of:
 
 - Power BI Administrator
 - Microsoft Fabric Administrator
 - Global Administrator
-
-### 4. Deep scan (optional, `--deep-scan` flag)
-
-The metadata scanner API requires two additional tenant settings to be enabled:
-
-- **Admin portal → Tenant settings → "Enhanced metadata scanning"** → enable "Allow service principals to use read-only Power BI admin APIs" (should already be on from step 2) and ensure "Enable enhanced metadata scanning" is on.
-
-Without these settings, `--deep-scan` will fail or return empty results.
 
 ---
 
@@ -93,9 +97,6 @@ PBI_CLIENT_ID=00000000-0000-0000-0000-000000000000
 PBI_CLIENT_SECRET=your-client-secret-here
 ```
 
-The tool reads these via `python-dotenv` so you don't need to export them manually.
-Alternatively, set them as real environment variables (useful in CI/CD).
-
 ---
 
 ## Usage
@@ -103,14 +104,19 @@ Alternatively, set them as real environment variables (useful in CI/CD).
 ```
 Usage: pbi-ptw-auditor [OPTIONS]
 
-  Inventory every Power BI report published to the open web in your tenant.
+  Full data-level exposure assessment for Power BI Publish-to-Web.
+
+  By default runs a complete assessment: inventories every report published
+  to the open web, enriches it with workspace and dataset metadata, runs the
+  metadata scanner for sensitivity labels and datasource types, and applies
+  risk flags. Pass --no-deep-scan for a faster inventory-only run.
 
 Options:
   --auth [service-principal|device-code]
                                   Authentication method.  [default: service-principal]
-  --deep-scan                     Enable the metadata scanner (sensitivity labels,
-                                  datasource types). Requires Enhanced metadata
-                                  scanning tenant settings.
+  --deep-scan / --no-deep-scan    Deep scan (default) calls the metadata scanner API for
+                                  sensitivity labels and datasource types. Pass --no-deep-scan
+                                  for inventory-only.  [default: deep-scan]
   --output-dir TEXT               Directory to write output files into.  [default: ./output]
   --formats TEXT                  Comma-separated output formats: csv, json, html.
                                   [default: csv,json,html]
@@ -125,16 +131,22 @@ Options:
 
 ### Examples
 
-**Service principal auth — all formats, default output directory:**
+**Full exposure assessment — service principal auth (default):**
 
 ```bash
 pbi-ptw-auditor --auth service-principal
 ```
 
-**Interactive login, deep scan, emails redacted, CSV only:**
+**Fast inventory only, no scanner — interactive login:**
 
 ```bash
-pbi-ptw-auditor --auth device-code --deep-scan --redact --formats csv
+pbi-ptw-auditor --auth device-code --no-deep-scan
+```
+
+**Full assessment, emails redacted, HTML only (for external sharing):**
+
+```bash
+pbi-ptw-auditor --auth service-principal --redact --formats html
 ```
 
 **Custom production workspace regex, JSON only, verbose logging:**
@@ -146,59 +158,74 @@ pbi-ptw-auditor \
   --log-level DEBUG
 ```
 
-**No flags, HTML only, custom output directory:**
-
-```bash
-pbi-ptw-auditor --no-flags --formats html --output-dir /tmp/audit-results
-```
-
 ---
 
 ## Output
 
-All files are written to `./output/` (or `--output-dir`) with a UTC timestamp in the filename, e.g. `ptw_audit_20260102_090000.csv`.
+All files are written to `./output/` (or `--output-dir`) with a UTC timestamp in the filename, e.g. `ptw_audit_20260602_090000.csv`.
 
 ### CSV
 
-One flat row per report. Columns:
+One flat row per report. Key columns:
 
 | Column | Description |
 |--------|-------------|
 | `artifactId` | Report GUID |
 | `displayName` | Report display name |
-| `workspaceName` | Workspace name (from admin/groups) |
-| `webUrl` / `embedUrl` | Direct links to the report |
+| `workspaceName` | Workspace name |
 | `sharerName` / `sharerEmail` | Who created the embed code |
 | `sensitivityLabel` | MIP label name (deep scan only) |
-| `datasetSourceTypes` | Pipe-separated datasource types |
+| `datasetSourceTypes` | Pipe-separated datasource types (deep scan only) |
 | `flags` | Pipe-separated fired flag names |
-| `enrichment_status` | `ok` or `partial` |
+| `indeterminate_flags` | Flags that could not be evaluated (metadata unavailable) |
+| `metadata_status` | `available` \| `indeterminate` \| `not_requested` |
+| `enrichment_status` | `ok` \| `partial` |
 
 ### JSON
 
-Structured output with a `run_metadata` block (timestamp, tenant ID, auth method, counts) and a `reports` array with all fields above in structured form.
+Structured output. The `run_metadata` block includes:
+
+```json
+{
+  "run_metadata": {
+    "utc_timestamp": "...",
+    "tenant_id": "...",
+    "deep_scan": true,
+    "detailed_metadata_available": true,
+    "total_count": 12,
+    "flagged_count": 3,
+    "missing_label_count": 5,
+    "warnings": []
+  }
+}
+```
+
+`missing_label_count` is `null` when `detailed_metadata_available` is `false`.
+Each report object includes `flags`, `indeterminate_flags`, and `metadata_status`.
 
 ### HTML
 
-A single self-contained file (inline CSS + vanilla JS, Google Fonts only external dependency) with:
+A single self-contained file with:
 
-- **Summary cards**: total public reports, flagged count, reports without sensitivity label, distinct sharers, distinct workspaces.
-- **Sortable, filterable table**: click any column header to sort; use the search box and flag filter dropdown to narrow results.
-- **Flag badges**: colour-coded pills for each risk flag.
+- **Warning banner** (shown when `detailed_metadata_available` is `false`) explaining that enhanced metadata scanning is not enabled and flags are indeterminate.
+- **Summary cards**: total public reports, flagged count, reports without sensitivity label (shows **N/A** when metadata unavailable), distinct sharers, distinct workspaces.
+- **Sortable, filterable table** with flag badges (solid colour = fired, dashed grey = indeterminate) and per-row metadata status.
 
 ---
 
 ## Risk flags
 
-Flags are heuristics — they identify reports that *may* warrant review, not definitive violations. Every flag fires transparently (shown per row) and can be disabled or tuned.
+Flags are heuristics — they identify reports that *may* warrant review. Every flag fires transparently (shown per row) and can be disabled or tuned.
 
-| Flag | When it fires | Default | Deep scan required |
-|------|---------------|---------|-------------------|
-| `production_workspace` | Workspace name matches `prod\|production` (configurable via `--prod-workspace-regex`) | ✅ | No |
-| `no_sensitivity_label` | Dataset has no MIP sensitivity label | ✅ | Yes |
-| `sensitive_source` | Dataset is bound to a high-risk datasource type (SQL, DirectLake, Lakehouse, …) | ✅ | Yes |
+| Flag | When it fires | Requires deep scan | Indeterminate when |
+|------|---------------|-------------------|--------------------|
+| `production_workspace` | Workspace name matches `prod\|production` (configurable) | No | Never |
+| `no_sensitivity_label` | Dataset has no MIP sensitivity label | Yes | Enhanced metadata scanning not enabled |
+| `sensitive_source` | Dataset bound to a high-risk source type (SQL, DirectLake, Lakehouse, …) | Yes | Enhanced metadata scanning not enabled |
 
-Disable all flags with `--no-flags`. The flag rules and watchlists live in [`pbi_ptw_auditor/flags.py`](pbi_ptw_auditor/flags.py) — easy to extend.
+**Indeterminate** means the flag could not be honestly evaluated — the scanner ran but returned no metadata detail. Indeterminate flags appear in `indeterminate_flags` (not `flags`) so downstream consumers can distinguish "genuinely no label" from "could not determine". A single warning is logged per run; flags are not spammed per row.
+
+Disable all flags with `--no-flags`. Rules and watchlists live in [`pbi_ptw_auditor/flags.py`](pbi_ptw_auditor/flags.py).
 
 ---
 
@@ -206,7 +233,7 @@ Disable all flags with `--no-flags`. The flag rules and watchlists live in [`pbi
 
 The API client (`api_client.py`) enforces a hard read-only constraint at runtime:
 
-- All requests are GET except one explicitly allowlisted POST: `admin/workspaces/getInfo` (the metadata scanner, which is a read-only metadata retrieval, not a mutation).
+- All requests are GET except one explicitly allowlisted POST: `admin/workspaces/getInfo` (the metadata scanner — read-only metadata retrieval, not a mutation).
 - Any attempt to call DELETE, PATCH, PUT, or an un-allowlisted POST raises `PermissionError` before the request is sent.
 
 No embed codes are revoked. No tenant state is changed.
@@ -235,19 +262,20 @@ pbi_ptw_auditor/
   auth.py           # service-principal + device-code token acquisition
   api_client.py     # base URL, pagination, retry/backoff, read-only guard
   retrieve.py       # publishedToWeb pull
-  enrich.py         # admin/reports + admin/groups join + optional scanner
-  flags.py          # heuristic risk flags, configurable
-  models.py         # pydantic models
-  utils.py          # shared helpers (email redaction)
+  enrich.py         # admin/reports + admin/groups join; scanner; detect_detailed_metadata_available
+  flags.py          # FlagResult, FlagConfig, apply_flags
+  models.py         # pydantic models (EnrichedReport, RunMetadata)
+  utils.py          # email redaction
   reporters/
     csv_reporter.py
     json_reporter.py
     html_reporter.py
     templates/report.html.j2
 tests/
-  test_pagination.py    # pagination loop + continuationUri gotcha
-  test_flags.py         # flag heuristics
-  test_enrich_join.py   # report/workspace join
+  test_pagination.py       # pagination loop + continuationUri gotcha
+  test_flags.py            # flag heuristics + indeterminate state
+  test_enrich_join.py      # report/workspace join
+  test_deep_scan_failsafe.py  # detect_detailed_metadata_available + fail-safe logic
 ```
 
 <!-- FUTURE: Scheduled exposure-audit workflow
@@ -264,7 +292,7 @@ This enables continuous monitoring without manual re-runs.
 ## Contributing
 
 1. Fork the repo and create a feature branch.
-2. Add or update tests — no live tenant is needed, use `respx` to mock HTTP.
+2. Add or update tests — no live tenant needed, use `respx` to mock HTTP.
 3. Run `ruff check .` and `pytest` before opening a PR.
 4. Keep changes focused; one concern per PR.
 

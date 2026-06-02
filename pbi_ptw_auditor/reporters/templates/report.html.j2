@@ -62,6 +62,18 @@
 
     .site-header .meta span + span::before { content: ' · '; }
 
+    /* ── Warning banner ─────────────────────────────────────────────── */
+    .warning-banner {
+      background: #FEF3C7;
+      border-left: 4px solid var(--colour-warning);
+      color: #78350F;
+      padding: 14px 40px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .warning-banner strong { font-weight: 600; }
+
     /* ── Layout ─────────────────────────────────────────────────────── */
     .container {
       max-width: 1440px;
@@ -100,9 +112,10 @@
       color: var(--colour-primary);
     }
 
-    .card--alert  .card__value { color: var(--colour-accent); }
-    .card--warn   .card__value { color: var(--colour-warning); }
+    .card--alert   .card__value { color: var(--colour-accent); }
+    .card--warn    .card__value { color: var(--colour-warning); }
     .card--neutral .card__value { color: var(--colour-text-muted); }
+    .card--na      .card__value { color: var(--colour-text-muted); font-size: 1.5rem; }
 
     /* ── Section heading ────────────────────────────────────────────── */
     .section-head {
@@ -197,7 +210,6 @@
     }
 
     .cell-name { font-weight: 600; }
-    .cell-url { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cell-muted { color: var(--colour-text-muted); }
 
     /* ── Flag badges ────────────────────────────────────────────────── */
@@ -213,16 +225,20 @@
       white-space: nowrap;
     }
 
-    .badge--prod    { background: #FEF3C7; color: #78350F; }
-    .badge--label   { background: #FEE2E2; color: #991B1B; }
-    .badge--source  { background: #FED7AA; color: #7C2D12; }
-    .badge--default { background: #E0E7EF; color: #2A3A4A; }
+    .badge--prod          { background: #FEF3C7; color: #78350F; }
+    .badge--label         { background: #FEE2E2; color: #991B1B; }
+    .badge--source        { background: #FED7AA; color: #7C2D12; }
+    .badge--default       { background: #E0E7EF; color: #2A3A4A; }
+    .badge--indeterminate { background: #F3F4F6; color: #6B7280; border: 1px dashed #9CA3AF; }
 
-    /* ── Enrichment status ──────────────────────────────────────────── */
+    /* ── Enrichment / metadata status pills ─────────────────────────── */
     .status { display: inline-block; padding: 1px 8px; border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 600; }
-    .status--ok      { background: #DCFCE7; color: #166534; }
-    .status--partial { background: #FEF9C3; color: #713F12; }
-    .status--failed  { background: #FEE2E2; color: #991B1B; }
+    .status--ok            { background: #DCFCE7; color: #166534; }
+    .status--partial       { background: #FEF9C3; color: #713F12; }
+    .status--failed        { background: #FEE2E2; color: #991B1B; }
+    .status--available     { background: #DCFCE7; color: #166534; }
+    .status--indeterminate { background: #F3F4F6; color: #6B7280; }
+    .status--not_requested { background: #E0E7EF; color: #2A3A4A; }
 
     /* ── Empty / no-results state ───────────────────────────────────── */
     .no-results {
@@ -254,9 +270,24 @@
     <span>{{ metadata.utc_timestamp }}</span>
     <span>Tenant: {{ metadata.tenant_id }}</span>
     <span>Auth: {{ metadata.auth_method }}</span>
-    {% if metadata.deep_scan %}<span>Deep scan enabled</span>{% endif %}
+    {% if metadata.deep_scan %}
+      <span>Deep scan {{ 'enabled' if metadata.detailed_metadata_available else 'enabled — metadata indeterminate' }}</span>
+    {% else %}
+      <span>Inventory only (--no-deep-scan)</span>
+    {% endif %}
   </p>
 </header>
+
+<!-- ── Warning banner (only shown when metadata is unavailable) ───────── -->
+{% if metadata.deep_scan and not metadata.detailed_metadata_available %}
+<div class="warning-banner" role="alert">
+  <strong>⚠ Metadata unavailable — sensitivity label and datasource flags are indeterminate.</strong>
+  The metadata scanner ran but returned no sensitivity labels or datasource types for any dataset.
+  This typically means <em>Enhanced metadata scanning</em> / <em>Detailed metadata responses</em>
+  is not enabled in your Power BI tenant settings. Enable those settings and re-run for a complete
+  exposure assessment, or use <code>--no-deep-scan</code> to suppress this warning.
+</div>
+{% endif %}
 
 <!-- ── Main content ──────────────────────────────────────────────────── -->
 <main class="container">
@@ -274,10 +305,17 @@
     </div>
 
     {% if metadata.deep_scan %}
-    <div class="card {{ 'card--warn' if metadata.missing_label_count > 0 else '' }}">
-      <div class="card__label">No Sensitivity Label</div>
-      <div class="card__value">{{ metadata.missing_label_count }}</div>
-    </div>
+      {% if metadata.detailed_metadata_available %}
+        <div class="card {{ 'card--warn' if metadata.missing_label_count and metadata.missing_label_count > 0 else '' }}">
+          <div class="card__label">No Sensitivity Label</div>
+          <div class="card__value">{{ metadata.missing_label_count if metadata.missing_label_count is not none else '0' }}</div>
+        </div>
+      {% else %}
+        <div class="card card--na">
+          <div class="card__label">No Sensitivity Label</div>
+          <div class="card__value">N/A</div>
+        </div>
+      {% endif %}
     {% endif %}
 
     <div class="card card--neutral">
@@ -323,7 +361,8 @@
           <th data-sort onclick="sortBy(4)">Principal Type</th>
           <th data-sort onclick="sortBy(5)">Sensitivity Label</th>
           <th>Flags</th>
-          <th data-sort onclick="sortBy(7)">Enrichment</th>
+          <th data-sort onclick="sortBy(7)">Metadata</th>
+          <th data-sort onclick="sortBy(8)">Enrichment</th>
           <th>Links</th>
         </tr>
       </thead>
@@ -355,7 +394,19 @@
                   <span class="badge badge--default">{{ flag }}</span>
                 {% endif %}
               {% endfor %}
+              {% for flag in r.indeterminate_flags %}
+                {% if flag == 'no_sensitivity_label' %}
+                  <span class="badge badge--indeterminate" title="Could not evaluate — enhanced metadata scanning not enabled">No Label?</span>
+                {% elif flag == 'sensitive_source' %}
+                  <span class="badge badge--indeterminate" title="Could not evaluate — enhanced metadata scanning not enabled">Source?</span>
+                {% else %}
+                  <span class="badge badge--indeterminate">{{ flag }}?</span>
+                {% endif %}
+              {% endfor %}
             </div>
+          </td>
+          <td>
+            <span class="status status--{{ r.metadata_status }}">{{ r.metadata_status }}</span>
           </td>
           <td>
             <span class="status status--{{ r.enrichment_status }}">{{ r.enrichment_status }}</span>
@@ -372,7 +423,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="9" class="no-results" style="display:table-cell;">
+          <td colspan="10" class="no-results" style="display:table-cell;">
             No reports published to the open web were found.
           </td>
         </tr>
@@ -400,8 +451,8 @@
 
   /* ---------- Sort ---------- */
   window.sortBy = function (colIndex) {
-    var table  = document.getElementById('report-table');
-    var tbody  = document.getElementById('table-body');
+    var table   = document.getElementById('report-table');
+    var tbody   = document.getElementById('table-body');
     var headers = table.querySelectorAll('thead th[data-sort]');
 
     if (currentSortCol === colIndex) {
@@ -431,16 +482,16 @@
 
   /* ---------- Filter ---------- */
   window.applyFilters = function () {
-    var search    = (document.getElementById('search-input').value || '').toLowerCase().trim();
-    var flagSel   = document.getElementById('flag-select').value;
-    var tbody     = document.getElementById('table-body');
-    var rows      = tbody.querySelectorAll('tr');
-    var visible   = 0;
+    var search  = (document.getElementById('search-input').value || '').toLowerCase().trim();
+    var flagSel = document.getElementById('flag-select').value;
+    var tbody   = document.getElementById('table-body');
+    var rows    = tbody.querySelectorAll('tr');
+    var visible = 0;
 
     rows.forEach(function (row) {
-      var text      = row.textContent.toLowerCase();
-      var flagData  = (row.dataset.flags || '').trim();
-      var flagList  = flagData ? flagData.split(' ') : [];
+      var text     = row.textContent.toLowerCase();
+      var flagData = (row.dataset.flags || '').trim();
+      var flagList = flagData ? flagData.split(' ') : [];
 
       var matchText = !search || text.indexOf(search) !== -1;
 

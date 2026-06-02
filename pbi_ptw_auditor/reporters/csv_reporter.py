@@ -26,6 +26,8 @@ _FIELDNAMES = [
     "sensitivityLabel",
     "datasetSourceTypes",
     "flags",
+    "indeterminate_flags",
+    "metadata_status",
     "enrichment_status",
 ]
 
@@ -66,6 +68,8 @@ def write_csv(reports: list[EnrichedReport], path: Path, *, redact: bool = False
                     "sensitivityLabel": r.sensitivityLabel or "",
                     "datasetSourceTypes": "|".join(r.datasetSourceTypes),
                     "flags": "|".join(r.flags),
+                    "indeterminate_flags": "|".join(r.indeterminate_flags),
+                    "metadata_status": r.metadata_status,
                     "enrichment_status": r.enrichment_status,
                 }
             )

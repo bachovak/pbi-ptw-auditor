@@ -13,7 +13,13 @@ from dotenv import load_dotenv
 
 from .api_client import PowerBIClient
 from .auth import get_token_device_code, get_token_service_principal
-from .enrich import enrich_reports, get_all_groups, get_all_reports, run_deep_scan
+from .enrich import (
+    detect_detailed_metadata_available,
+    enrich_reports,
+    get_all_groups,
+    get_all_reports,
+    run_deep_scan,
+)
 from .flags import FlagConfig, apply_flags
 from .models import RunMetadata
 from .reporters.csv_reporter import write_csv
@@ -21,6 +27,15 @@ from .reporters.html_reporter import write_html
 from .reporters.json_reporter import write_json
 
 load_dotenv()
+
+_METADATA_UNAVAILABLE_WARNING = (
+    "The metadata scanner ran but returned no sensitivity labels or datasource types "
+    "for any dataset. This typically means 'Enhanced metadata scanning' / "
+    "'Detailed metadata responses' is not enabled in your Power BI tenant settings. "
+    "The no_sensitivity_label and sensitive_source flags cannot be evaluated and are "
+    "marked indeterminate for all reports. Enable enhanced metadata scanning in the "
+    "Power BI Admin portal, or run with --no-deep-scan to skip the scanner entirely."
+)
 
 
 @click.command()
@@ -36,12 +51,15 @@ load_dotenv()
     ),
 )
 @click.option(
-    "--deep-scan",
-    is_flag=True,
-    default=False,
+    "--deep-scan/--no-deep-scan",
+    default=True,
     help=(
-        "Enable the metadata scanner for sensitivity labels and datasource types. "
-        "Requires 'Enhanced metadata scanning' tenant settings to be enabled. Slow and rate-limited."
+        "Deep scan (default) calls the metadata scanner API to retrieve sensitivity "
+        "labels and datasource types — the signals that distinguish a full exposure "
+        "assessment from a basic inventory. Requires 'Enhanced metadata scanning' / "
+        "'Detailed metadata responses' tenant settings to be enabled; if those settings "
+        "are off, metadata flags are marked indeterminate rather than firing on empty data. "
+        "Pass --no-deep-scan for a faster, inventory-only run that skips the scanner."
     ),
 )
 @click.option(
@@ -91,19 +109,28 @@ def main(
     prod_workspace_regex: str,
     log_level: str,
 ) -> None:
-    """Inventory every Power BI report published to the open web in your tenant.
+    """Full data-level exposure assessment for Power BI Publish-to-Web.
+
+    By default runs a complete assessment: inventories every report published
+    to the open web, enriches it with workspace and dataset metadata, runs the
+    metadata scanner for sensitivity labels and datasource types, and applies
+    risk flags. Pass --no-deep-scan for a faster inventory-only run.
 
     Reads tenant credentials from environment variables (or a .env file).
     Produces CSV, JSON, and HTML reports in the output directory.
 
     \b
     Examples:
-      # Service principal, all formats, default output directory:
+      # Full exposure assessment (default) — service principal auth:
       pbi-ptw-auditor --auth service-principal
 
     \b
-      # Interactive login, deep scan enabled, emails redacted, CSV only:
-      pbi-ptw-auditor --auth device-code --deep-scan --redact --formats csv
+      # Fast inventory only, no scanner — interactive login:
+      pbi-ptw-auditor --auth device-code --no-deep-scan
+
+    \b
+      # Full assessment, emails redacted for external sharing:
+      pbi-ptw-auditor --auth service-principal --redact --formats html
 
     \b
       # Custom production workspace regex, JSON only, verbose logging:
@@ -174,15 +201,42 @@ def main(
 
         enriched = enrich_reports(raw_reports, admin_reports, admin_groups, scan_results)
 
+    # ── Detect metadata availability ──────────────────────────────────────────
+    detailed_metadata_available = True
+    run_warnings: list[str] = []
+
+    if deep_scan:
+        detailed_metadata_available = detect_detailed_metadata_available(enriched)
+        if not detailed_metadata_available:
+            logger.warning(_METADATA_UNAVAILABLE_WARNING)
+            run_warnings.append(_METADATA_UNAVAILABLE_WARNING)
+
+    # ── Set metadata_status per report ────────────────────────────────────────
+    if deep_scan:
+        meta_status = "available" if detailed_metadata_available else "indeterminate"
+        for report in enriched:
+            report.metadata_status = meta_status
+
     # ── Apply flags ───────────────────────────────────────────────────────────
     if not no_flags:
         flag_config = FlagConfig(production_workspace_regex=prod_workspace_regex)
         for report in enriched:
-            report.flags = apply_flags(report, flag_config, deep_scan=deep_scan)
+            result = apply_flags(
+                report,
+                flag_config,
+                deep_scan=deep_scan,
+                detailed_metadata_available=detailed_metadata_available,
+            )
+            report.flags = result.fired
+            report.indeterminate_flags = result.indeterminate
 
     # ── Build run metadata ────────────────────────────────────────────────────
     flagged_count = sum(1 for r in enriched if r.flags)
-    missing_label_count = sum(1 for r in enriched if deep_scan and not r.sensitivityLabel)
+    missing_label_count = (
+        sum(1 for r in enriched if not r.sensitivityLabel)
+        if deep_scan and detailed_metadata_available
+        else None
+    )
 
     metadata = RunMetadata(
         utc_timestamp=datetime.now(timezone.utc),
@@ -192,6 +246,8 @@ def main(
         total_count=len(enriched),
         flagged_count=flagged_count,
         missing_label_count=missing_label_count,
+        detailed_metadata_available=detailed_metadata_available,
+        warnings=run_warnings,
     )
 
     ts = metadata.utc_timestamp.strftime("%Y%m%d_%H%M%S")
@@ -211,6 +267,13 @@ def main(
         path = output_path / f"ptw_audit_{ts}.html"
         write_html(enriched, metadata, path, redact=redact)
         click.echo(f"HTML → {path}")
+
+    if run_warnings:
+        click.echo(
+            "\nWARNING: Metadata flags are indeterminate — enhanced metadata scanning "
+            "appears to be disabled in this tenant. See log for details.",
+            err=True,
+        )
 
     click.echo(
         f"\nAudit complete: {metadata.total_count} public report(s), "
