@@ -30,7 +30,7 @@ def get_published_to_web(client: PowerBIClient) -> list[PublishedReport]:
     reports: list[PublishedReport] = []
     page_num = 0
 
-    for page in client.paginate_get(_PUBLISHED_TO_WEB_PATH):
+    for page in client.paginate_get(_PUBLISHED_TO_WEB_PATH, items_key="ArtifactAccessEntities"):
         page_num += 1
         logger.info("Page %d: received %d item(s).", page_num, len(page))
 
