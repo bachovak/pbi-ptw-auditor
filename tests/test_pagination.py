@@ -14,6 +14,7 @@ import pytest
 import respx
 
 from pbi_ptw_auditor.api_client import PowerBIClient
+from pbi_ptw_auditor.retrieve import get_published_to_web
 
 _PTW_URL = "https://api.powerbi.com/v1.0/myorg/admin/widelySharedArtifacts/publishedToWeb"
 _WRONG_URL = "https://api.powerbi.com/v1.0/myorg/admin/widelySharedArtifacts/linksSharedToWholeOrganization"
@@ -147,3 +148,57 @@ def test_403_raises_permission_error() -> None:
     with pytest.raises(PermissionError, match="403"):
         client.get("admin/widelySharedArtifacts/publishedToWeb")
     client.close()
+
+
+@respx.mock
+def test_get_published_to_web_uses_artifact_access_entities_key() -> None:
+    """get_published_to_web must read items from ArtifactAccessEntities, not 'value'.
+
+    Regression test: the publishedToWeb endpoint returns items under
+    ArtifactAccessEntities while most other admin endpoints use 'value'.
+    """
+    respx.get(_PTW_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ArtifactAccessEntities": [
+                    {
+                        "artifactId": "report-abc",
+                        "displayName": "Finance Dashboard",
+                        "artifactType": "Report",
+                        "shareType": "PublishToWeb",
+                        "sharer": {
+                            "displayName": "Alice",
+                            "identifier": "alice-id",
+                            "principalType": "User",
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    client = PowerBIClient("fake-token")
+    reports = get_published_to_web(client)
+    client.close()
+
+    assert len(reports) == 1
+    assert reports[0].artifactId == "report-abc"
+    assert reports[0].displayName == "Finance Dashboard"
+
+
+@respx.mock
+def test_get_published_to_web_empty_value_key_returns_nothing() -> None:
+    """If the API mistakenly returns 'value' instead of ArtifactAccessEntities, result is empty."""
+    respx.get(_PTW_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"value": [{"artifactId": "report-xyz"}]},
+        )
+    )
+
+    client = PowerBIClient("fake-token")
+    reports = get_published_to_web(client)
+    client.close()
+
+    assert reports == []
